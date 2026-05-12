@@ -61,12 +61,22 @@ class CodexDispatchSlotB:
 
 def _build_task_packet(prompt: str) -> str:
     return f"""MODE: reviewer
-OBJECTIVE: Evaluate the provided skill and return only the requested JSON scores.
+WORKDIR: {Path.cwd()}
+OBJECTIVE: Evaluate the provided skill and return only the requested JSON scores. Read the skill content embedded in PROMPT; do not load any other files.
 
-INSTRUCTIONS:
-- Do not make live API calls.
-- Return strict JSON matching the requested schema.
-- Do not include commentary outside the JSON.
+WRITE SCOPE:
+- none
+
+NON-GOALS:
+- Do not modify any files.
+- Do not include commentary outside the strict JSON output.
+
+VERIFICATION:
+- The deliverable JSON must contain a `scores` object with exactly 5 integer keys (goal, depth, specificity, robustness, trigger_clarity) each in [0,10], plus an `improvements` list of strings.
+
+DELIVERABLE:
+- Strict JSON object: {{"scores": {{"goal": int, "depth": int, "specificity": int, "robustness": int, "trigger_clarity": int}}, "improvements": ["..."]}}
+- No prose outside the JSON. Fenced code block is acceptable.
 
 PROMPT:
 {prompt}
@@ -74,8 +84,35 @@ PROMPT:
 
 
 def _read_dispatch_output(tmp_path: Path, stdout: str) -> str:
+    # codex_dispatch_role.py writes its envelope at <workdir>/.codex-dispatch/runs/<id>/.
+    # The path is printed on stdout. The reviewer model's strict-JSON deliverable
+    # appears nested inside result.json's `summary` string (codex envelope wraps it).
+    import json as _json
+
     for name in ("result.json", "result.md"):
         candidate = tmp_path / name
         if candidate.exists():
             return candidate.read_text(encoding="utf-8")
+
+    stdout_run_dir = Path(stdout.strip().splitlines()[-1]) if stdout.strip() else None
+    if not (stdout_run_dir and stdout_run_dir.is_dir()):
+        return stdout
+
+    result_json_path = stdout_run_dir / "result.json"
+    if result_json_path.exists():
+        content = result_json_path.read_text(encoding="utf-8")
+        try:
+            envelope = _json.loads(content)
+            # Reviewer mode: model deliverable JSON nested in envelope.summary.
+            summary = envelope.get("summary", "")
+            if summary.strip().startswith("{") or "scores" in summary:
+                return summary
+        except (_json.JSONDecodeError, AttributeError):
+            pass
+        return content
+
+    result_md_path = stdout_run_dir / "result.md"
+    if result_md_path.exists():
+        return result_md_path.read_text(encoding="utf-8")
+
     return stdout
