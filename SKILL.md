@@ -350,6 +350,71 @@ Skillify produces three durable artifacts per skill:
 
    Required items gate the verdict; item 3 (cross-modal eval) is informational and never blocks PASS.
 
+## Skillify as a verb
+
+In addition to the explicit `python3 -m scripts.audit ...` and `python3 -m scripts.scaffold ...` flows above, skillify is designed to be invoked as a single verb mid-conversation. The pattern, adapted from Garry Tan's original article, is: prototype in conversation, see it work, say "skillify it", and turn the working procedure into durable skill infrastructure.
+
+### Verb trigger phrases
+
+Treat any of these user phrases as a possible verb-mode trigger:
+
+- "skillify it"
+- "make this permanent" or "make this a skill"
+- "remember this as a skill" or "remember this as a <topic> skill"
+- "next time we need to do this..." or "next time anyone needs X..."
+- "let's turn this into a skill"
+
+When the main-session LLM hears one of these and the recent conversation contains a substantive solution, workflow, or discovery that meets [Phase 0 criteria](#phase-0-should-this-be-a-skill), trigger the verb workflow below. Do not trigger on the verb alone if there is no substantive work to promote; idle "we could skillify that someday" language should wait for real material.
+
+### Conversation-extraction protocol
+
+The extraction is LLM-driven; `scripts/skillify_it.py` does not read chat logs or mine the conversation. When the verb fires, the main-session LLM extracts:
+
+1. **Skill name** - a short kebab-case slug that captures the topic, such as `webhook-oauth`, `calendar-double-booking`, or `ngrok-verify`. If the user named it in the verb phrase, use that; otherwise propose one.
+2. **Description** - one paragraph describing what the skill does, what failure mode it prevents, and when to invoke it. Mirror SKILL.md frontmatter style and include real trigger phrases in plain quotes; see [Phase 5](#phase-5-resolver-trigger--check-resolvable-items-7-9).
+3. **Procedure** - the steps the user and agent just walked through, rewritten in instructive register. This becomes the SKILL.md body.
+4. **Deterministic split** - identify which steps are deterministic, such as file operations, format conversion, fixed lookups, timestamp math, grep, or curl checks, versus latent work such as judgment, summarization, or taste. Deterministic parts should become `scripts/*.py` later; latent parts stay as SKILL.md prose. Name the future scripts and stub their call sites if the implementation is not written yet.
+5. **Trigger phrases** - the actual user phrases that should route to this skill in the future, kept in their natural style.
+
+The key distinction is latent vs deterministic work. The LLM should not keep doing deterministic work in latent space when the same input should produce the same output; it should write deterministic scripts and call them next time.
+
+### Invocation
+
+After extraction, invoke the orchestration entry point:
+
+```bash
+python3 -m scripts.skillify_it <name> [--target-dir ~/dev] [--description "..."] [--audit] [--json]
+```
+
+This is a thin wrapper around `scaffold` plus optional `audit`. `scaffold` creates the SKILL.md skeleton, `scripts/__init__.py`, and `test/test_smoke.py` at `<target_dir>/<name>/`. `--audit` then runs `audit_skill` on the freshly scaffolded skill and prints the verdict so the agent immediately sees what is still missing, often Phase 3 cross-modal eval, Phase 5 trigger clarity, or E2E proof.
+
+The script does not perform the conversation extraction. It only makes the scaffold-then-audit chain feel like one step after the LLM has supplied the name and description.
+
+### After scaffolding
+
+The scaffold is only a skeleton. The LLM then:
+
+- Fill in the SKILL.md body with the extracted procedure.
+- Write deterministic scripts for the deterministic split, using TDD per [Phase 4](#phase-4-tests-items-4-6).
+- Add the trigger phrases into the description.
+- Run `python3 -m scripts.cross_modal_eval <skill>/SKILL.md` to populate the Phase 3 receipt.
+- Re-run `python3 -m scripts.audit <skill>/SKILL.md` and check the verdict moves toward "properly skilled".
+
+### Examples
+
+| User says | Verb workflow extracts |
+|---|---|
+| "hot damn it worked. can you remember this as a webhook skill and skillify it, next time we need to do some webhooks?" | name=`webhook-oauth`, triggers=["next time we do webhooks", "OAuth callback flow"], procedure=the OAuth callback handler just debugged |
+| "skillify it - next time anyone in openclaw needs a headless browser, route to playwright; for headed, ask user to run gstack browser" | name=`browser-path-selector`, triggers=["need a browser", "headless or headed", "scrape a site"], deterministic=which binary or command path to call, latent=headless-vs-headed decision |
+| "make a skill, make it deterministic to check calendar double-bookings, tomorrow I have a double-booked 11am" | name=`calendar-double-booking`, triggers=["check my calendar", "any conflicts tomorrow"], deterministic=overlap-detection script, latent=which conflicts matter to flag |
+| "can we make a skill that says whenever you send me a link you have to curl it yourself to make sure the endpoint is open and the tunnel works? skillify it!" | name=`ngrok-verify`, triggers=["send me a link", "verify the tunnel works"], deterministic=curl status and response check, latent=what evidence to summarize |
+
+### Anti-patterns specific to verb mode
+
+- ❌ Triggering on the verb without substantive material; the conversation must contain a workflow worth promoting.
+- ❌ Calling `scripts/skillify_it.py` without first doing the LLM-driven extraction.
+- ❌ Skipping the deterministic-vs-latent split; without that classification, the result is still just a prompt instead of a skill.
+
 ## Anti-Patterns
 
 - ❌ Writing tests before cross-modal eval (locks in mediocrity)
