@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skillify"
+version = "0.1.0"
+description = "Standalone Claude Code skill — turn any feature into a properly-skilled, tested, resolvable unit of agent capability. Standalone fork of garrytan/gbrain skillify v1.1.0."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Fred Chu" },
+]
+keywords = ["claude-code", "skills", "meta-skill", "skillify", "cross-modal-eval"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = [
+  "anthropic>=0.40.0",
+  "platformdirs>=4.0.0",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.0.0"]
+gemini = ["google-generativeai>=0.8.0"]
+all = [
+  "openai>=1.0.0",
+  "google-generativeai>=0.8.0",
+]
+dev = [
+  "pytest>=7.0",
+  "pytest-cov>=4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/fredchu/skillify-skill"
+Repository = "https://github.com/fredchu/skillify-skill"
+Upstream = "https://github.com/garrytan/gbrain"
+
+[tool.setuptools]
+packages = ["scripts"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+python_files = ["test_*.py"]
