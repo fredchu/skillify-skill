@@ -21,7 +21,7 @@ import yaml
 from .aggregator import aggregate
 from .receipt import write_receipt
 from .slots import (
-    AnthropicSlotA,
+    ClaudeCodeSlotA,
     CodexDispatchSlotB,
     GeminiSlotB,
     OpenAISlotB,
@@ -50,14 +50,14 @@ def detect_available_slots() -> tuple[SlotClass | None, SlotClass | None]:
     position returns ``None``.
     """
 
-    if not AnthropicSlotA.is_available():
+    if not ClaudeCodeSlotA.is_available():
         return None, None
 
     for slot_b_class in SLOT_B_FALLBACKS:
         if slot_b_class.is_available():
-            return AnthropicSlotA, slot_b_class
+            return ClaudeCodeSlotA, slot_b_class
 
-    return AnthropicSlotA, None
+    return ClaudeCodeSlotA, None
 
 
 def run_cycle(

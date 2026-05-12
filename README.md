@@ -11,7 +11,7 @@ This repo is a **standalone fork of [`garrytan/gbrain`](https://github.com/garry
 Upstream skillify is excellent but coupled to the gbrain Bun/TypeScript CLI and the personal `~/.gbrain/` brain framework. To use it standalone you needed to install gbrain first. This fork:
 
 - Replaces `gbrain skillify ...` CLI commands with pure Python scripts (`scripts/audit.py`, `scripts/scaffold.py`, etc.).
-- Replaces the 3-evaluator (OpenAI + Anthropic + Google) cross-modal eval with a 2-evaluator design: Slot A (Anthropic Opus 4.7) plus Slot B (auto-detect fallback chain). One mandatory provider, one best-available second opinion.
+- Replaces the 3-evaluator upstream cross-modal eval with a 2-evaluator design: Slot A (Claude Code subscription) plus Slot B (auto-detect fallback chain). One mandatory Claude Code evaluator, one best-available second opinion.
 - Stores eval receipts in `platformdirs.user_cache_dir("skillify")` instead of `~/.gbrain/.gbrain/eval-receipts/`.
 - Adapts Phase 5 (Resolver) to Claude Code's description-based routing — dynamic scan of installed skills by default, optional `--emit RESOLVER.md` for users who want a static central registry.
 - Adapts Phase 6 (Brain filing) to a generalized "any persistent location requires filing entry in SKILL.md" check, removing gbrain-specific brain coupling.
@@ -22,7 +22,8 @@ Upstream skillify is excellent but coupled to the gbrain Bun/TypeScript CLI and 
 
 - Python 3.10 or newer.
 - Claude Code installed (so the skill loads from `~/.claude/skills/`).
-- At least one of: `ANTHROPIC_API_KEY` (Slot A, required for full cross-modal eval), `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, or the OpenAI Codex CLI `codex` on PATH (any of these satisfies Slot B).
+- Claude Code CLI `claude` on PATH for the Slot A subprocess fallback.
+- At least one Slot B option: `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, OpenAI Codex CLI `codex` on PATH, or the `codex-dispatch` Claude Code skill.
 
 ### macOS / Linux
 
@@ -63,11 +64,9 @@ Look for `skillify` in the loaded-skills list with no errors.
 
 ## Configure
 
-### Slot A — required for full cross-modal eval gate
+### Slot A — Claude Code subscription
 
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-```
+**Slot A** — Claude Code (subscription). Two paths: (a) when invoked from a CC main session, the LLM uses the Agent tool to spawn an evaluator subagent (preferred — no CLI spawn overhead); (b) when invoked from a non-CC shell, the Python adapter (`scripts/slots/slot_a_claude_code.py`) calls subprocess `claude --print`. Both paths bill against your Claude Code subscription quota. Requires the `claude` CLI on PATH for the subprocess fallback (`shutil.which("claude")`).
 
 ### Slot B — fallback chain (auto-detects first available, in order)
 
@@ -118,7 +117,7 @@ The fork is one-shot — we don't currently sync upstream changes back. If upstr
 
 This is an MVP polish targeted at one-friend onboarding (a Windows user) plus the broader Claude Code OSS community as a discovery audience. Concretely:
 
-- Anthropic Opus 4.7 Slot A is the only API that's been live-tested end-to-end at fork time. Slot B providers each have an integration smoke test but the fallback chain hasn't been stress-tested under quota exhaustion.
+- Slot A uses Claude Code subscription quota through the Agent tool or `claude --print` CLI fallback. Slot B providers each have an integration smoke test but the fallback chain hasn't been stress-tested under quota exhaustion.
 - No CI / GitHub Actions / PyPI release workflow. To upgrade, `git pull` and `pip install -e .` again.
 - Issues and PRs welcome. No SLA — best-effort responses.
 

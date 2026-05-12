@@ -56,10 +56,18 @@ def _patch_receipt_dir(monkeypatch: pytest.MonkeyPatch, root: Path) -> Path:
     return receipts
 
 
-def test_audit_minimal_skill_passes(tmp_path: Path) -> None:
+def test_audit_minimal_skill_passes(tmp_path: Path, monkeypatch) -> None:
     skill_path = _write_skill(tmp_path)
     _add_script(tmp_path)
     _add_test(tmp_path, name="test_e2e_demo.py")
+
+    # Hermetic: pin Slot detection to (None, None) so cross_modal_eval is NA
+    # (test should not depend on whether `claude`/`codex` is on PATH).
+    monkeypatch.setattr(
+        audit.cross_modal_eval,
+        "detect_available_slots",
+        lambda: (None, None),
+    )
 
     result = audit.audit_skill(skill_path, project_root=tmp_path)
 

@@ -25,7 +25,6 @@ classifiers = [
   "Topic :: Software Development :: Quality Assurance",
 ]
 dependencies = [
-  "anthropic>=0.40.0",
   "platformdirs>=4.0.0",
   "pyyaml>=6.0",
 ]

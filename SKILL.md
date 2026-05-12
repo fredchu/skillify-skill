@@ -31,7 +31,7 @@ mutating: true
 This skill is a standalone fork of [`garrytan/gbrain`](https://github.com/garrytan/gbrain) `skillify` v1.1.0 (MIT licensed). The original 11-item checklist, Phase 0-7 workflow, anti-patterns list, and worked example are preserved verbatim where the substance survived the port. Adaptations from upstream:
 
 - `gbrain skillify ...` CLI commands → pure Python scripts (`scripts/audit.py`, `scripts/scaffold.py`, `scripts/check_resolvable.py`, `scripts/cross_modal_eval.py`).
-- 3-evaluator (OpenAI + Anthropic + Google) cross-modal eval → 2-evaluator (Slot A: Anthropic Opus 4.7 always; Slot B: codex-dispatch → OpenAI → Gemini → raw codex fallback chain).
+- 3-evaluator upstream cross-modal eval → 2-evaluator (Slot A: Claude Code subscription; Slot B: codex-dispatch → OpenAI → Gemini → raw codex fallback chain).
 - `~/.gbrain/.gbrain/eval-receipts/` → `platformdirs.user_cache_dir("skillify")`.
 - Phase 5 Resolver: dynamic scan of installed skills by default + optional `--emit RESOLVER.md`.
 - Phase 6 Brain filing: generalized to "any persistent location requires filing entry in SKILL.md".
@@ -115,6 +115,30 @@ This creates `~/.claude/skills/my-new-skill/{SKILL.md, scripts/, test/}` with a 
 
 ## Phase 3: Cross-Modal Eval (item 3) — THE QUALITY GATE
 
+### LLM-driven invocation (preferred when in a Claude Code session)
+
+When this skill is invoked from within a Claude Code main session (the
+typical case), the main-session LLM SHOULD prefer the Agent tool to spawn
+two evaluator subagents (Slot A + first-available Slot B) rather than
+falling through to the Python adapter's subprocess path. The Agent-tool
+flow:
+
+1. Read SKILL.md being evaluated; build the prompt via
+   `scripts.slots.base.build_eval_prompt(skill_text, task_description)`
+2. Spawn Slot A subagent (Agent tool, general-purpose, opus) with the
+   prompt; expect JSON in the reply
+3. Spawn Slot B subagent (auto-detect via codex-dispatch / openai SDK /
+   gemini SDK / raw codex) with the same prompt
+4. Parse both replies via `scripts.slots.base.parse_score_json`
+5. Aggregate via `scripts.aggregator.aggregate`
+6. Write receipt via `scripts.receipt.write_receipt`
+
+The Python adapter path (subprocess `claude --print` via
+`ClaudeCodeSlotA.score()`) is the fallback when this skill is invoked
+from a non-CC shell (e.g. `python3 -m scripts.cross_modal_eval` from
+plain bash). Both paths bill against the Claude Code subscription;
+neither uses the per-token Anthropic API.
+
 ### Why this comes before tests
 
 Tests lock in behavior. If the behavior is mediocre, tests lock in mediocrity. Cross-modal eval proves the quality bar FIRST, then tests cement it.
@@ -141,7 +165,7 @@ The command runs 2 frontier models from 2 different providers (Slot A + Slot B),
 
 | Slot | Model | Provider | Required |
 |------|-------|----------|----------|
-| A | `claude-opus-4-7` | Anthropic | Yes |
+| A | `claude-code-cli` | Claude Code subscription / `claude` CLI | Yes |
 | B | `codex-dispatch` → OpenAI → Gemini → raw `codex` (auto-detect first available) | varies | Yes (any one) |
 
 **These MUST be from DIFFERENT providers.** Different families have less correlated blind spots — that's the whole point of cross-modal eval. Refresh the model picks when a new generation ships.
@@ -187,11 +211,10 @@ Override with `--cycles 3` for harder skills; CI defaults to `--cycles 1`.
 
 ### Provider configuration
 
-Slot A:
-
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-```
+Slot A: Claude Code subscription. In a Claude Code main session, prefer the
+Agent-tool flow above. From a non-CC shell, install/authenticate Claude Code
+and ensure `claude` is on PATH, or set `SKILLIFY_CLAUDE_BIN` to the binary
+name/path used by `shutil.which`.
 
 Slot B (any one is enough; auto-detected in this order):
 
@@ -202,7 +225,7 @@ Slot B (any one is enough; auto-detected in this order):
 
 ### Cost expectations
 
-2 cycles × 2 models = 4 frontier calls max per run. Expect $0.20–$1.00 per full run on default `--max-tokens 4000`. Receipts include per-call model identifiers for retroactive audit.
+2 cycles × 2 models = 4 frontier calls max per run. Slot A bills against Claude Code subscription quota; Slot B cost depends on the selected fallback provider. Receipts include per-call model identifiers for retroactive audit.
 
 ### Skip cross-modal eval when:
 
@@ -284,7 +307,7 @@ Phase 2: python3 -m scripts.scaffold summarize-pr
          Edit SKILL.md to add real description + extract logic to scripts/summarize_pr.py
 Phase 3: python3 -m scripts.cross_modal_eval --task "..." --output ~/.claude/skills/summarize-pr/SKILL.md
          Cycle 1 →
-           Slot A (Opus 4.7): goal=7, depth=6, specificity=5 → "no test plan in summary"
+           Slot A (Claude Code): goal=7, depth=6, specificity=5 → "no test plan in summary"
            Slot B (codex-dispatch/GPT-4o): goal=6, depth=5, specificity=4 → "misses file-level diffs"
            Aggregate: goal=6.5 FAIL, depth=5.5 FAIL, specificity=4.5 FAIL+floor
            Top improvements: add file-level changes, include test plan, use PR context

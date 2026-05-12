@@ -72,21 +72,21 @@ class FailingSlotB(PassingSlotB):
 
 
 def test_detect_available_slots_no_keys(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cross_modal_eval.AnthropicSlotA, "is_available", classmethod(lambda cls: False))
+    monkeypatch.setattr(cross_modal_eval.ClaudeCodeSlotA, "is_available", classmethod(lambda cls: False))
 
     assert cross_modal_eval.detect_available_slots() == (None, None)
 
 
 def test_detect_available_slots_only_slot_a(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cross_modal_eval.AnthropicSlotA, "is_available", classmethod(lambda cls: True))
+    monkeypatch.setattr(cross_modal_eval.ClaudeCodeSlotA, "is_available", classmethod(lambda cls: True))
     for slot_b in cross_modal_eval.SLOT_B_FALLBACKS:
         monkeypatch.setattr(slot_b, "is_available", classmethod(lambda cls: False))
 
-    assert cross_modal_eval.detect_available_slots() == (cross_modal_eval.AnthropicSlotA, None)
+    assert cross_modal_eval.detect_available_slots() == (cross_modal_eval.ClaudeCodeSlotA, None)
 
 
 def test_detect_available_slots_full(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cross_modal_eval.AnthropicSlotA, "is_available", classmethod(lambda cls: True))
+    monkeypatch.setattr(cross_modal_eval.ClaudeCodeSlotA, "is_available", classmethod(lambda cls: True))
     monkeypatch.setattr(
         cross_modal_eval.CodexDispatchSlotB,
         "is_available",
@@ -94,7 +94,7 @@ def test_detect_available_slots_full(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     assert cross_modal_eval.detect_available_slots() == (
-        cross_modal_eval.AnthropicSlotA,
+        cross_modal_eval.ClaudeCodeSlotA,
         cross_modal_eval.CodexDispatchSlotB,
     )
 
