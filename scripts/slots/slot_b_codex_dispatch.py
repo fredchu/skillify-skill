@@ -30,9 +30,14 @@ class CodexDispatchSlotB:
             task_path = Path(tmp_dir) / "task.md"
             task_path.write_text(_build_task_packet(prompt), encoding="utf-8")
 
+            output_root = Path(tmp_dir) / "runs"
             try:
                 result = subprocess.run(
-                    ["python3", str(self.DISPATCH_SCRIPT), "--task", str(task_path)],
+                    [
+                        "python3", str(self.DISPATCH_SCRIPT),
+                        "--task", str(task_path),
+                        "--output-dir", str(output_root),
+                    ],
                     text=True,
                     capture_output=True,
                     timeout=self.TIMEOUT_SECONDS,
@@ -84,17 +89,19 @@ PROMPT:
 
 
 def _read_dispatch_output(tmp_path: Path, stdout: str) -> str:
-    # codex_dispatch_role.py writes its envelope at <workdir>/.codex-dispatch/runs/<id>/.
-    # The path is printed on stdout. The reviewer model's strict-JSON deliverable
-    # appears nested inside result.json's `summary` string (codex envelope wraps it).
+    """Read codex-dispatch envelope and extract the reviewer model's deliverable.
+
+    Resolution order:
+    1. codex_dispatch_role.py prints the run_dir path on stdout (last line).
+    2. Read result.json from that run_dir; the model's strict-JSON deliverable
+       is nested inside envelope.summary as a stringified JSON object.
+    3. Fall back to result.md (rarely needed; envelope.summary is canonical).
+    4. Fall back to raw stdout (only if no artifacts found at all).
+    """
     import json as _json
 
-    for name in ("result.json", "result.md"):
-        candidate = tmp_path / name
-        if candidate.exists():
-            return candidate.read_text(encoding="utf-8")
-
-    stdout_run_dir = Path(stdout.strip().splitlines()[-1]) if stdout.strip() else None
+    stdout_lines = stdout.strip().splitlines() if stdout.strip() else []
+    stdout_run_dir = Path(stdout_lines[-1]) if stdout_lines else None
     if not (stdout_run_dir and stdout_run_dir.is_dir()):
         return stdout
 
@@ -103,13 +110,14 @@ def _read_dispatch_output(tmp_path: Path, stdout: str) -> str:
         content = result_json_path.read_text(encoding="utf-8")
         try:
             envelope = _json.loads(content)
-            # Reviewer mode: model deliverable JSON nested in envelope.summary.
-            summary = envelope.get("summary", "")
-            if summary.strip().startswith("{") or "scores" in summary:
-                return summary
-        except (_json.JSONDecodeError, AttributeError):
-            pass
-        return content
+        except _json.JSONDecodeError:
+            return content  # malformed envelope — let parse_score_json complain
+        if not isinstance(envelope, dict):
+            return content
+        summary = envelope.get("summary")
+        if isinstance(summary, str) and ("{" in summary or "scores" in summary):
+            return summary
+        return content  # envelope present but summary not parseable — let caller raise
 
     result_md_path = stdout_run_dir / "result.md"
     if result_md_path.exists():

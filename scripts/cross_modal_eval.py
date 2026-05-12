@@ -112,7 +112,7 @@ def evaluate(
     if slot_a_class is None:
         return {
             "final_verdict": "unavailable",
-            "reason": "Slot A unavailable: set ANTHROPIC_API_KEY and install anthropic.",
+            "reason": "Slot A unavailable: install Claude Code (`claude` CLI on PATH). Slot A uses your Claude Code subscription, not the Anthropic API.",
         }
     if slot_b_class is None:
         return {
