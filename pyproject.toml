@@ -47,8 +47,10 @@ Homepage = "https://github.com/fredchu/skillify-skill"
 Repository = "https://github.com/fredchu/skillify-skill"
 Upstream = "https://github.com/garrytan/gbrain"
 
-[tool.setuptools]
-packages = ["scripts"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["scripts*"]
+exclude = ["test*", ".codex-dispatch*", ".pytest_cache*"]
 
 [tool.pytest.ini_options]
 testpaths = ["test"]

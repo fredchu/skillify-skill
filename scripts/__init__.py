@@ -12,5 +12,6 @@ warnings.filterwarnings(
 )
 from . import check_resolvable
 from . import receipt
+from . import slots
 
-__all__ = ["aggregator", "check_resolvable", "receipt"]
+__all__ = ["aggregator", "check_resolvable", "receipt", "slots"]
