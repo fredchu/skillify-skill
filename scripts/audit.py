@@ -176,18 +176,42 @@ def _test_files(project_root: Path) -> list[Path]:
     return sorted(paths)
 
 
+_CODE_EXTENSIONS = (
+    ".py", ".sh", ".bash", ".zsh", ".fish",
+    ".js", ".ts", ".mjs", ".cjs",
+    ".rb", ".go", ".rs", ".lua", ".pl",
+    ".swift", ".kt", ".java",
+    ".applescript",
+)
+_CODE_IGNORE_NAMES = {"__init__.py", "README.md", "README"}
+
+
 def _code_present(project_root: Path, skill_text: str) -> dict[str, str]:
     scripts_dir = project_root / "scripts"
-    code_files = [
-        path
-        for path in scripts_dir.glob("*.py")
-        if path.is_file() and path.name != "__init__.py"
-    ] if scripts_dir.exists() else []
+    code_files: list[Path] = []
+    if scripts_dir.exists():
+        for path in scripts_dir.iterdir():
+            if not path.is_file():
+                continue
+            if path.name in _CODE_IGNORE_NAMES:
+                continue
+            if path.suffix.lower() in _CODE_EXTENSIONS:
+                code_files.append(path)
+            elif path.stat().st_mode & 0o111:
+                # Executable file with no recognized extension (e.g. `mytool`).
+                code_files.append(path)
     if code_files:
-        return _item("pass", f"Found {len(code_files)} script file(s).")
+        extensions = sorted({p.suffix.lower() or "(no-ext)" for p in code_files})
+        return _item(
+            "pass",
+            f"Found {len(code_files)} script file(s) ({', '.join(extensions)}).",
+        )
     if re.search(r"\bpure[- ]prose\b|\bno code\b", skill_text, re.IGNORECASE):
         return _item("na", "Skill declares itself pure-prose.")
-    return _item("fail", "No scripts/*.py files found.")
+    return _item(
+        "fail",
+        f"No code files found under scripts/. Checked extensions: {', '.join(_CODE_EXTENSIONS)} plus executables.",
+    )
 
 
 def _cross_modal_eval(skill_slug: str, skill_path: Path) -> dict[str, str]:

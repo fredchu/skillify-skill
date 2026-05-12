@@ -92,6 +92,66 @@ def test_audit_close_when_one_missing(tmp_path: Path) -> None:
     assert result["items"]["code_present"]["status"] == "fail"
 
 
+def test_code_present_accepts_shell_scripts(tmp_path: Path) -> None:
+    """Polyglot: shell skills (e.g. ghkb) should pass code_present, not be marked
+    as missing code just because they don't use Python."""
+    _write_skill(tmp_path)
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "ghkb-add.sh").write_text("#!/bin/bash\necho hello\n", encoding="utf-8")
+
+    skill_path = tmp_path / "SKILL.md"
+    result = audit.audit_skill(skill_path, project_root=tmp_path)
+    assert result["items"]["code_present"]["status"] == "pass"
+    assert ".sh" in result["items"]["code_present"]["detail"]
+
+
+def test_code_present_accepts_executable_without_extension(tmp_path: Path) -> None:
+    """Polyglot: a script with no extension but executable bit (e.g. ~/bin/podscribe)
+    should count as code."""
+    import os
+    _write_skill(tmp_path)
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    binary = scripts_dir / "mytool"
+    binary.write_text("#!/usr/bin/env bash\necho ok\n", encoding="utf-8")
+    os.chmod(binary, 0o755)
+
+    skill_path = tmp_path / "SKILL.md"
+    result = audit.audit_skill(skill_path, project_root=tmp_path)
+    assert result["items"]["code_present"]["status"] == "pass"
+
+
+def test_code_present_ignores_readme_and_init(tmp_path: Path) -> None:
+    """Only README.md or __init__.py in scripts/ should still trigger fail
+    (these are not real implementation code)."""
+    _write_skill(tmp_path)
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "__init__.py").write_text("", encoding="utf-8")
+    (scripts_dir / "README.md").write_text("# notes", encoding="utf-8")
+
+    skill_path = tmp_path / "SKILL.md"
+    result = audit.audit_skill(skill_path, project_root=tmp_path)
+    assert result["items"]["code_present"]["status"] == "fail"
+
+
+def test_code_present_polyglot_mixed(tmp_path: Path) -> None:
+    """A skill with both Python and shell scripts should pass with both
+    extensions surfaced in the detail."""
+    _write_skill(tmp_path)
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "main.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (scripts_dir / "helper.sh").write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+
+    skill_path = tmp_path / "SKILL.md"
+    result = audit.audit_skill(skill_path, project_root=tmp_path)
+    detail = result["items"]["code_present"]["detail"]
+    assert result["items"]["code_present"]["status"] == "pass"
+    assert ".py" in detail and ".sh" in detail
+
+
 def test_audit_cross_modal_na_when_no_slots(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
