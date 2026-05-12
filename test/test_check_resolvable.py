@@ -61,6 +61,18 @@ def test_scan_skips_excluded_dirs(tmp_path) -> None:
     assert scan_skills([tmp_path]) == []
 
 
+def test_scan_dedups_same_content(tmp_path) -> None:
+    skills_root = tmp_path / "skills"
+    cache_root = tmp_path / "plugins" / "cache" / "x" / "skills"
+    _write_skill(skills_root, "same", 'Use when "same trigger" or "same task".')
+    _write_skill(cache_root, "same", 'Use when "same trigger" or "same task".')
+
+    skills = scan_skills([skills_root, tmp_path / "plugins" / "cache"])
+
+    assert len(skills) == 1
+    assert skills[0]["name"] == "same"
+
+
 def test_synthetic_collision_detected(tmp_path) -> None:
     _write_skill(tmp_path, "one", 'Use when "foo bar" or "baz qux".')
     _write_skill(tmp_path, "two", 'Trigger: "foo bar", "baz qux".')
@@ -81,6 +93,32 @@ def test_no_collision_when_distinct(tmp_path) -> None:
     collisions = detect_collisions(scan_skills([tmp_path]))
 
     assert collisions == []
+
+
+def test_strict_mode_skips_blob_collisions(tmp_path) -> None:
+    _write_skill(
+        tmp_path,
+        "one",
+        "Analyze repeated project context and produce stable output.",
+    )
+    _write_skill(
+        tmp_path,
+        "two",
+        "Summarize repeated project context and produce concise notes.",
+    )
+    skills = scan_skills([tmp_path])
+
+    assert len(detect_collisions(skills)) == 1
+    assert detect_collisions(skills, strict=True) == []
+
+
+def test_strict_mode_higher_min_overlap(tmp_path) -> None:
+    _write_skill(tmp_path, "one", 'Use when "foo bar" or "baz qux".')
+    _write_skill(tmp_path, "two", 'Trigger: "foo bar", "baz qux".')
+    skills = scan_skills([tmp_path])
+
+    assert len(detect_collisions(skills)) == 1
+    assert detect_collisions(skills, strict=True) == []
 
 
 def test_emit_resolver_md_format(tmp_path) -> None:
@@ -154,3 +192,43 @@ def test_main_cli_exit_code(tmp_path) -> None:
 
     assert collision.returncode == 1
     assert json.loads(collision.stdout)["collision_count"] == 1
+
+
+def test_main_strict_flag(tmp_path) -> None:
+    _write_skill(tmp_path, "one", 'Use when "foo bar" or "baz qux".')
+    _write_skill(tmp_path, "two", 'Trigger: "foo bar", "baz qux".')
+
+    default = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.check_resolvable",
+            "--scan",
+            str(tmp_path),
+            "--json",
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    strict = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.check_resolvable",
+            "--scan",
+            str(tmp_path),
+            "--strict",
+            "--json",
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert default.returncode == 1
+    assert json.loads(default.stdout)["collision_count"] == 1
+    assert strict.returncode == 0
+    assert json.loads(strict.stdout)["collision_count"] == 0

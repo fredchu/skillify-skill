@@ -7,12 +7,15 @@ it collects double-quoted phrases, backtick-quoted slash commands, and phrases
 following markers such as ``when user says X``, ``trigger: X``, and
 ``use when X``. When no marker is found, the full lowercased description is
 kept as a single blob and blob-to-blob collision checks compare shared word
-tokens of length four or greater.
+tokens of length four or greater. Use ``--strict`` to de-duplicate identical
+skills by content hash, require stronger explicit-trigger overlap, and skip
+blob-to-blob comparisons.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from itertools import combinations
@@ -46,7 +49,8 @@ def scan_skills(roots: list[Path]) -> list[dict[str, Any]]:
     """
 
     skills: list[dict[str, Any]] = []
-    for root in roots:
+    skill_paths: list[tuple[int, Path]] = []
+    for root_index, root in enumerate(roots):
         root = Path(root).expanduser()
         if not root.exists():
             continue
@@ -54,26 +58,41 @@ def scan_skills(roots: list[Path]) -> list[dict[str, Any]]:
         for skill_path in sorted(root.rglob("SKILL.md")):
             if _is_excluded(skill_path):
                 continue
+            skill_paths.append((root_index, skill_path))
 
-            frontmatter = _load_frontmatter(skill_path)
-            if frontmatter is None:
-                continue
+    # First-seen wins after deterministic root/path sorting. This keeps one copy
+    # when the same skill is installed directly and cached by a plugin.
+    seen_hashes: set[str] = set()
+    seen_names: set[str] = set()
+    for _, skill_path in sorted(skill_paths, key=lambda item: (item[0], str(item[1]))):
+        content_hash = _content_sha256(skill_path)
+        if content_hash is None or content_hash in seen_hashes:
+            continue
 
-            name = frontmatter.get("name")
-            description = frontmatter.get("description")
-            if not isinstance(name, str) or not name.strip():
-                continue
-            if not isinstance(description, str) or not description.strip():
-                continue
+        frontmatter = _load_frontmatter(skill_path)
+        if frontmatter is None:
+            continue
 
-            skills.append(
-                {
-                    "path": skill_path,
-                    "name": name.strip(),
-                    "description": description.strip(),
-                    "triggers": _extract_triggers(description),
-                }
-            )
+        name = frontmatter.get("name")
+        description = frontmatter.get("description")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        if not isinstance(description, str) or not description.strip():
+            continue
+        normalized_name = _normalize_trigger(name)
+        if normalized_name in seen_names:
+            continue
+        seen_hashes.add(content_hash)
+        seen_names.add(normalized_name)
+
+        skills.append(
+            {
+                "path": skill_path,
+                "name": name.strip(),
+                "description": description.strip(),
+                "triggers": _extract_triggers(description),
+            }
+        )
 
     return skills
 
@@ -81,12 +100,15 @@ def scan_skills(roots: list[Path]) -> list[dict[str, Any]]:
 def detect_collisions(
     skills: list[dict[str, Any]],
     min_overlap: int = 2,
+    strict: bool = False,
 ) -> list[dict[str, Any]]:
     """Return skill pairs sharing at least ``min_overlap`` triggers.
 
     Exact trigger phrase comparison is case-insensitive and whitespace-stripped.
     When both skills fell back to full-description trigger blobs, collision
-    comparison uses shared word tokens of length four or greater.
+    comparison uses shared word tokens of length four or greater. Strict mode
+    requires at least three exact explicit triggers, skips blob-vs-blob checks,
+    and requires at least four shared word tokens for mixed explicit/blob pairs.
     """
 
     collisions: list[dict[str, Any]] = []
@@ -96,11 +118,23 @@ def detect_collisions(
         triggers_a.discard("")
         triggers_b.discard("")
 
+        is_blob_a = _is_blob_skill(skill_a)
+        is_blob_b = _is_blob_skill(skill_b)
         shared = sorted(triggers_a & triggers_b)
-        if len(shared) < min_overlap and _is_blob_skill(skill_a) and _is_blob_skill(skill_b):
+        threshold = min_overlap
+
+        if strict:
+            if is_blob_a and is_blob_b:
+                continue
+            if is_blob_a != is_blob_b:
+                shared = sorted(_trigger_tokens(skill_a) & _trigger_tokens(skill_b))
+                threshold = max(min_overlap, 4)
+            else:
+                threshold = max(min_overlap, 3)
+        elif len(shared) < min_overlap and is_blob_a and is_blob_b:
             shared = sorted(_blob_tokens(skill_a) & _blob_tokens(skill_b))
 
-        if len(shared) >= min_overlap:
+        if len(shared) >= threshold:
             collisions.append(
                 {
                     "skills": [skill_a["name"], skill_b["name"]],
@@ -194,11 +228,20 @@ def main(argv: list[str] | None = None) -> int:
         default=2,
         help="Minimum shared triggers required to flag a collision.",
     )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Reduce false positives by skipping blob-vs-blob checks and raising overlap thresholds.",
+    )
     args = parser.parse_args(argv)
 
     roots = args.scan if args.scan is not None else _default_roots()
     skills = scan_skills(roots)
-    collisions = detect_collisions(skills, min_overlap=args.min_overlap)
+    collisions = detect_collisions(
+        skills,
+        min_overlap=args.min_overlap,
+        strict=args.strict,
+    )
 
     emitted_path: Path | None = None
     if args.emit is not None:
@@ -210,6 +253,7 @@ def main(argv: list[str] | None = None) -> int:
         "skills": skills,
         "collisions": collisions,
         "resolver_path": emitted_path,
+        "strict": args.strict,
     }
 
     if args.json:
@@ -227,6 +271,13 @@ def _default_roots() -> list[Path]:
 
 def _is_excluded(path: Path) -> bool:
     return any(part in EXCLUDED_DIRS for part in path.parts)
+
+
+def _content_sha256(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
 
 
 def _load_frontmatter(path: Path) -> dict[str, Any] | None:
@@ -320,6 +371,14 @@ def _is_blob_skill(skill: dict[str, Any]) -> bool:
 def _blob_tokens(skill: dict[str, Any]) -> set[str]:
     description = _normalize_trigger(skill["description"])
     return {token for token in _WORD_RE.findall(description) if len(token) >= 4}
+
+
+def _trigger_tokens(skill: dict[str, Any]) -> set[str]:
+    tokens: set[str] = set()
+    for trigger in skill.get("triggers", []):
+        if isinstance(trigger, str):
+            tokens.update(token for token in _WORD_RE.findall(trigger) if len(token) >= 4)
+    return tokens
 
 
 def _jsonable(value: Any) -> Any:

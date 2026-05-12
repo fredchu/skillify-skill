@@ -59,12 +59,12 @@ def _patch_receipt_dir(monkeypatch: pytest.MonkeyPatch, root: Path) -> Path:
 def test_audit_minimal_skill_passes(tmp_path: Path) -> None:
     skill_path = _write_skill(tmp_path)
     _add_script(tmp_path)
-    _add_test(tmp_path)
+    _add_test(tmp_path, name="test_e2e_demo.py")
 
     result = audit.audit_skill(skill_path, project_root=tmp_path)
 
     assert result["verdict"] == "properly skilled"
-    assert result["score"] == "5/5"
+    assert result["score"] == "6/6"
 
 
 def test_audit_missing_skill_md_returns_needs_skillify(tmp_path: Path) -> None:
@@ -76,48 +76,84 @@ def test_audit_missing_skill_md_returns_needs_skillify(tmp_path: Path) -> None:
 
 def test_audit_close_when_one_missing(tmp_path: Path) -> None:
     skill_path = _write_skill(tmp_path)
-    _add_script(tmp_path)
+    _add_test(tmp_path, name="test_e2e_demo.py")
 
     result = audit.audit_skill(skill_path, project_root=tmp_path)
 
     assert result["verdict"] == "close"
-    assert result["items"]["unit_tests"]["status"] == "fail"
+    assert result["items"]["code_present"]["status"] == "fail"
 
 
-def test_audit_cross_modal_status_missing(
+def test_audit_cross_modal_na_when_no_slots(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    _patch_receipt_dir(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        audit.cross_modal_eval,
+        "detect_available_slots",
+        lambda: (None, None),
+    )
     skill_path = _write_skill(tmp_path)
     _add_script(tmp_path)
-    _add_test(tmp_path)
+    _add_test(tmp_path, name="test_e2e_demo.py")
 
     result = audit.audit_skill(skill_path, project_root=tmp_path)
 
-    assert result["cross_modal_status"] == "missing"
+    assert result["items"]["cross_modal_eval"]["status"] == "na"
     assert result["verdict"] == "properly skilled"
+
+
+def test_audit_cross_modal_pass_when_receipt_present(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        audit.cross_modal_eval,
+        "detect_available_slots",
+        lambda: (object, object),
+    )
+    skill_path = _write_skill(tmp_path)
+    _add_script(tmp_path)
+    _add_test(tmp_path, name="test_e2e_demo.py")
+    monkeypatch.setattr(audit.receipt, "find_current_receipt", lambda slug, path: tmp_path / "receipt.json")
+
+    result = audit.audit_skill(skill_path, project_root=tmp_path)
+
+    assert result["items"]["cross_modal_eval"]["status"] == "pass"
+    assert result["verdict"] == "properly skilled"
+
+
+def test_audit_cross_modal_fail_when_slots_but_no_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        audit.cross_modal_eval,
+        "detect_available_slots",
+        lambda: (object, object),
+    )
+    monkeypatch.setattr(audit.receipt, "find_current_receipt", lambda slug, path: None)
+    monkeypatch.setattr(audit.receipt, "list_receipts", lambda slug: [])
+    skill_path = _write_skill(tmp_path)
+    _add_script(tmp_path)
+    _add_test(tmp_path, name="test_e2e_demo.py")
+
+    result = audit.audit_skill(skill_path, project_root=tmp_path)
+
+    assert result["items"]["cross_modal_eval"]["status"] == "fail"
+    assert result["verdict"] == "close"
+    assert result["score"] == "6/7"
 
 
 def test_audit_cross_modal_status_found(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    _patch_receipt_dir(monkeypatch, tmp_path)
-    skill_path = _write_skill(tmp_path)
-    _add_script(tmp_path)
-    _add_test(tmp_path)
-    write_receipt("demo", skill_path, {"verdict": "pass"})
-
-    result = audit.audit_skill(skill_path, project_root=tmp_path)
-
-    assert result["cross_modal_status"] == "found"
-
-
-def test_audit_cross_modal_status_stale(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
+    monkeypatch.setattr(
+        audit.cross_modal_eval,
+        "detect_available_slots",
+        lambda: (object, object),
+    )
     _patch_receipt_dir(monkeypatch, tmp_path)
     skill_path = _write_skill(tmp_path)
     _add_script(tmp_path)
@@ -130,6 +166,58 @@ def test_audit_cross_modal_status_stale(
     assert result["cross_modal_status"] == "stale"
 
 
+def test_audit_e2e_test_pass_when_e2e_file_present(tmp_path: Path) -> None:
+    skill_path = _write_skill(tmp_path)
+    _add_script(tmp_path)
+    _add_test(tmp_path, name="test_e2e_foo.py")
+
+    result = audit.audit_skill(skill_path, project_root=tmp_path)
+
+    assert result["items"]["e2e_test"]["status"] == "pass"
+
+
+def test_audit_e2e_test_pass_when_e2e_marker_present(tmp_path: Path) -> None:
+    skill_path = _write_skill(tmp_path)
+    _add_script(tmp_path)
+    _add_test(
+        tmp_path,
+        text="import pytest\n\n@pytest.mark.e2e\ndef test_ok():\n    assert True\n",
+    )
+
+    result = audit.audit_skill(skill_path, project_root=tmp_path)
+
+    assert result["items"]["e2e_test"]["status"] == "pass"
+
+
+def test_audit_e2e_test_fail_when_no_e2e(tmp_path: Path) -> None:
+    skill_path = _write_skill(tmp_path)
+    _add_script(tmp_path)
+    _add_test(tmp_path)
+
+    result = audit.audit_skill(skill_path, project_root=tmp_path)
+
+    assert result["items"]["e2e_test"]["status"] == "fail"
+    assert result["verdict"] == "close"
+
+
+def test_audit_score_format_with_na(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        audit.cross_modal_eval,
+        "detect_available_slots",
+        lambda: (None, None),
+    )
+    skill_path = _write_skill(tmp_path)
+    _add_script(tmp_path)
+    _add_test(tmp_path, name="test_e2e_demo.py")
+
+    result = audit.audit_skill(skill_path, project_root=tmp_path)
+
+    assert result["score"] == "6/6"
+
+
 def test_main_cli_exit_codes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -137,6 +225,7 @@ def test_main_cli_exit_codes(
 ) -> None:
     skill_path = _write_skill(tmp_path)
     _add_script(tmp_path)
+    _add_test(tmp_path)
     assert audit.main([str(skill_path), "--project-root", str(tmp_path), "--json"]) == 0
     close_result = json.loads(capsys.readouterr().out)
     assert close_result["verdict"] == "close"

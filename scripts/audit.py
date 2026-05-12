@@ -10,23 +10,33 @@ from typing import Any
 
 import yaml
 
-from . import receipt
+try:
+    from scripts import check_resolvable, cross_modal_eval, receipt
+except ImportError:
+    import sys
+
+    sys.modules.pop("scripts", None)
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from scripts import check_resolvable, cross_modal_eval, receipt
 
 
 BLOCKING_ITEMS = (
     "skill_md_present",
     "code_present",
+    "cross_modal_eval",
     "unit_tests",
     "resolver_trigger",
     "check_resolvable",
+    "e2e_test",
 )
 
 
 def audit_skill(skill_path: Path, project_root: Path | None = None) -> dict[str, Any]:
     """Return a skillify audit verdict dictionary.
 
-    Cross-modal evaluation status is informational and never affects the
-    verdict, matching the upstream skillify v1.1.0 contract.
+    Cross-modal evaluation blocks only when evaluator slots are available. In
+    environments with no Slot A adapter, the item is marked N/A and omitted
+    from the blocking score denominator.
     """
 
     skill_path = Path(skill_path)
@@ -45,10 +55,11 @@ def audit_skill(skill_path: Path, project_root: Path | None = None) -> dict[str,
     )
     items["code_present"] = _code_present(root, text)
 
-    cross_modal_status = _cross_modal_status(slug, skill_path)
-    items["cross_modal_eval"] = _item(
-        "pass" if cross_modal_status == "found" else "fail",
-        f"Cross-modal receipt status: {cross_modal_status}.",
+    items["cross_modal_eval"] = _cross_modal_eval(slug, skill_path)
+    cross_modal_status = (
+        "unavailable"
+        if items["cross_modal_eval"]["status"] == "na"
+        else _cross_modal_status(slug, skill_path)
     )
 
     items["unit_tests"] = _item(
@@ -63,13 +74,16 @@ def audit_skill(skill_path: Path, project_root: Path | None = None) -> dict[str,
     items["e2e_test"] = _e2e_test(test_files)
     items["brain_filing"] = _brain_filing(root, text)
 
-    blocking_failures = [
-        name for name in BLOCKING_ITEMS if items[name]["status"] == "fail"
+    applicable_blocking = [
+        name for name in BLOCKING_ITEMS if items[name]["status"] != "na"
     ]
-    passed_blocking = len(BLOCKING_ITEMS) - len(blocking_failures)
+    blocking_failures = [
+        name for name in applicable_blocking if items[name]["status"] == "fail"
+    ]
+    passed_blocking = len(applicable_blocking) - len(blocking_failures)
     if not blocking_failures:
         verdict = "properly skilled"
-    elif len(blocking_failures) <= 2:
+    elif passed_blocking >= 5:
         verdict = "close"
     else:
         verdict = "needs skillify"
@@ -79,7 +93,7 @@ def audit_skill(skill_path: Path, project_root: Path | None = None) -> dict[str,
         "skill_slug": slug,
         "items": items,
         "verdict": verdict,
-        "score": f"{passed_blocking}/{len(BLOCKING_ITEMS)}",
+        "score": f"{passed_blocking}/{len(applicable_blocking)}",
         "cross_modal_status": cross_modal_status,
     }
 
@@ -153,7 +167,13 @@ def _test_files(project_root: Path) -> list[Path]:
     test_dir = project_root / "test"
     if not test_dir.exists():
         return []
-    return sorted(path for path in test_dir.rglob("test_*.py") if path.is_file())
+    paths = {
+        path
+        for pattern in ("test_*.py", "*_e2e.py")
+        for path in test_dir.rglob(pattern)
+        if path.is_file()
+    }
+    return sorted(paths)
 
 
 def _code_present(project_root: Path, skill_text: str) -> dict[str, str]:
@@ -168,6 +188,23 @@ def _code_present(project_root: Path, skill_text: str) -> dict[str, str]:
     if re.search(r"\bpure[- ]prose\b|\bno code\b", skill_text, re.IGNORECASE):
         return _item("na", "Skill declares itself pure-prose.")
     return _item("fail", "No scripts/*.py files found.")
+
+
+def _cross_modal_eval(skill_slug: str, skill_path: Path) -> dict[str, str]:
+    slot_a_class, slot_b_class = cross_modal_eval.detect_available_slots()
+    if slot_a_class is None and slot_b_class is None:
+        return _item(
+            "na",
+            "Cross-modal eval unavailable: no local evaluator slots detected.",
+        )
+
+    receipt_status = _cross_modal_status(skill_slug, skill_path)
+    if receipt_status == "found":
+        return _item("pass", "Current cross-modal receipt found.")
+    return _item(
+        "fail",
+        f"Cross-modal evaluator slots detected but receipt status is {receipt_status}.",
+    )
 
 
 def _cross_modal_status(skill_slug: str, skill_path: Path) -> str:
@@ -238,9 +275,13 @@ def _check_resolvable(project_root: Path) -> dict[str, str]:
 def _e2e_test(test_files: list[Path]) -> dict[str, str]:
     for test_file in test_files:
         text = _read_text(test_file)
-        if "e2e" in test_file.name.lower() or "end-to-end" in text.lower():
+        if (
+            test_file.match("test_e2e*.py")
+            or test_file.match("*_e2e.py")
+            or "@pytest.mark.e2e" in text
+        ):
             return _item("pass", f"E2E coverage found in {test_file.name}.")
-    return _item("fail", "No E2E smoke test detected; informational only.")
+    return _item("fail", "No E2E smoke test detected.")
 
 
 def _brain_filing(project_root: Path, skill_text: str) -> dict[str, str]:
